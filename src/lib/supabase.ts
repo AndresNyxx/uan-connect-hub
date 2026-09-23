@@ -133,5 +133,7 @@ export async function crearReserva(input: {
       creada_en: ahoraSinZona(),
     }),
   });
-  return filas[0];
+  const creada = filas[0];
+  if (!creada) throw new Error("No se pudo crear la reserva.");
+  return creada;
 }
