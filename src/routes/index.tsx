@@ -1,17 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { ArrowLeft, CalendarDays, CheckCircle2, Clock, MapPin, User } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Calendar } from "@/components/ui/calendar";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import {
   TIPOS_ASESORIA,
   buscarUsuarioPorCodigo,
@@ -29,17 +26,16 @@ import {
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "UAN Advisor Connect · Reserva de asesorías" },
+      { title: "UAN Advisor Connect · Programa tu asesoría" },
       {
         name: "description",
         content:
-          "Reserva asesorías de orientación psicosocial y de lectura y redacción académica en la Universidad Antonio Nariño usando tu código estudiantil.",
+          "Programa paso a paso tu asesoría de orientación psicosocial o de lectura y redacción en la Universidad Antonio Nariño: elige día, hora y confirma.",
       },
       { property: "og:title", content: "UAN Advisor Connect" },
       {
         property: "og:description",
-        content:
-          "Identifícate con tu código estudiantil y reserva tu asesoría en la Universidad Antonio Nariño.",
+        content: "Elige día, hora y confirma tu asesoría en la Universidad Antonio Nariño.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -48,22 +44,23 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
-function hoyISO() {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
-
-function formatoFecha(fecha: string) {
+const p2 = (n: number) => String(n).padStart(2, "0");
+const claveFecha = (d: Date) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+const hoyISO = () => claveFecha(new Date());
+const aDate = (fecha: string) => {
   const [y, m, d] = fecha.split("-").map(Number);
-  return new Date(y!, (m ?? 1) - 1, d ?? 1).toLocaleDateString("es-CO", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  });
-}
-
+  return new Date(y!, (m ?? 1) - 1, d ?? 1);
+};
+const formatoFecha = (fecha: string) =>
+  aDate(fecha).toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" });
 const hhmm = (h: string) => h.slice(0, 5);
+
+type Paso = 1 | 2 | 3;
+const PASOS: { n: Paso; titulo: string }[] = [
+  { n: 1, titulo: "Día" },
+  { n: 2, titulo: "Hora" },
+  { n: 3, titulo: "Confirmación" },
+];
 
 function Index() {
   const [codigo, setCodigo] = useState("");
@@ -76,11 +73,33 @@ function Index() {
   const [franjas, setFranjas] = useState<Franja[]>([]);
   const [ocupadas, setOcupadas] = useState<Set<number>>(new Set());
 
+  const [paso, setPaso] = useState<Paso>(1);
+  const [dia, setDia] = useState<string | null>(null);
   const [seleccion, setSeleccion] = useState<Franja | null>(null);
   const [confirmando, setConfirmando] = useState(false);
   const [reserva, setReserva] = useState<Reserva | null>(null);
-
   const [mensaje, setMensaje] = useState<string | null>(null);
+
+  const disponibles = useMemo(
+    () => franjas.filter((f) => !ocupadas.has(f.id)),
+    [franjas, ocupadas],
+  );
+  const diasConCupo = useMemo(
+    () => new Set(disponibles.map((f) => f.fecha)),
+    [disponibles],
+  );
+  const franjasDelDia = useMemo(
+    () =>
+      disponibles
+        .filter((f) => f.fecha === dia)
+        .sort((a, b) => a.hora_inicio.localeCompare(b.hora_inicio)),
+    [disponibles, dia],
+  );
+  const franjasOcupadasDelDia = useMemo(
+    () => franjas.filter((f) => f.fecha === dia && ocupadas.has(f.id)),
+    [franjas, ocupadas, dia],
+  );
+  const recursoDe = (id: number) => recursos.find((r) => r.id === id);
 
   async function identificar(e: React.FormEvent) {
     e.preventDefault();
@@ -104,6 +123,8 @@ function Index() {
 
   async function elegirTipo(nuevoTipo: string) {
     setTipo(nuevoTipo);
+    setPaso(1);
+    setDia(null);
     setSeleccion(null);
     setReserva(null);
     setMensaje(null);
@@ -111,13 +132,10 @@ function Index() {
     try {
       const recursosTipo = await listarRecursosPorTipo(nuevoTipo);
       setRecursos(recursosTipo);
-      const franjasTipo = await listarFranjas(
-        recursosTipo.map((r) => r.id),
-        hoyISO(),
-      );
+      const franjasTipo = await listarFranjas(recursosTipo.map((r) => r.id), hoyISO());
       setFranjas(franjasTipo);
-      const reservasActivas = await listarReservasActivas(franjasTipo.map((f) => f.id));
-      setOcupadas(new Set(reservasActivas.map((r) => r.franja_id)));
+      const activas = await listarReservasActivas(franjasTipo.map((f) => f.id));
+      setOcupadas(new Set(activas.map((r) => r.franja_id)));
     } catch {
       setMensaje("No pudimos cargar las franjas disponibles. Intenta de nuevo.");
       setRecursos([]);
@@ -135,13 +153,13 @@ function Index() {
       if (await franjaEstaOcupada(seleccion.id)) {
         setOcupadas((prev) => new Set(prev).add(seleccion.id));
         setSeleccion(null);
-        setMensaje("Esa franja acaba de ser reservada por otro estudiante. Elige otra.");
+        setPaso(2);
+        setMensaje("Esa hora acaba de ser reservada por otro estudiante. Elige otra.");
         return;
       }
       const nueva = await crearReserva({ franja: seleccion, usuarioId: usuario.id });
       setReserva(nueva);
       setOcupadas((prev) => new Set(prev).add(seleccion.id));
-      setSeleccion(null);
     } catch {
       setMensaje("No se pudo realizar la reserva. Intenta nuevamente.");
     } finally {
@@ -155,43 +173,49 @@ function Index() {
     setTipo(null);
     setRecursos([]);
     setFranjas([]);
+    setOcupadas(new Set());
+    setPaso(1);
+    setDia(null);
     setSeleccion(null);
     setReserva(null);
     setMensaje(null);
   }
 
-  const recursoDe = (id: number) => recursos.find((r) => r.id === id);
-  const disponibles = franjas.filter((f) => !ocupadas.has(f.id));
-  const porFecha = disponibles.reduce<Record<string, Franja[]>>((acc, f) => {
-    (acc[f.fecha] ??= []).push(f);
-    return acc;
-  }, {});
+  function nuevaCita() {
+    setReserva(null);
+    setSeleccion(null);
+    setDia(null);
+    setPaso(1);
+    setMensaje(null);
+  }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-muted/30">
       <header className="border-b bg-primary text-primary-foreground">
-        <div className="mx-auto flex max-w-3xl items-center gap-3 px-6 py-6">
-          <div className="flex size-11 items-center justify-center rounded-lg bg-primary-foreground/15 text-lg font-bold tracking-tight">
+        <div className="mx-auto flex max-w-4xl items-center gap-3 px-5 py-6 sm:px-6">
+          <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary-foreground/15 text-lg font-bold tracking-tight">
             UAN
           </div>
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">UAN Advisor Connect</h1>
-            <p className="text-sm opacity-80">Universidad Antonio Nariño · Reserva de asesorías</p>
+            <h1 className="text-lg font-semibold tracking-tight sm:text-xl">UAN Advisor Connect</h1>
+            <p className="text-xs opacity-80 sm:text-sm">
+              Universidad Antonio Nariño · Programación de asesorías
+            </p>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl space-y-6 px-6 py-10">
+      <main className="mx-auto max-w-4xl space-y-5 px-4 py-8 sm:px-6 sm:py-10">
         {mensaje && (
-          <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {mensaje}
           </div>
         )}
 
-        {/* Paso 1: identificación */}
-        <Card>
+        {/* Identificación */}
+        <Card className="overflow-hidden">
           <CardHeader>
-            <CardTitle>1. Identifícate</CardTitle>
+            <CardTitle className="text-base">Identifícate</CardTitle>
             <CardDescription>
               Ingresa tu código estudiantil. No necesitas usuario ni contraseña.
             </CardDescription>
@@ -215,13 +239,18 @@ function Index() {
                 </Button>
               </form>
             ) : (
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/40 px-4 py-3">
-                <div>
-                  <p className="font-medium">{usuario.nombre}</p>
-                  <p className="text-sm text-muted-foreground">{usuario.correo}</p>
-                  {usuario.programa && (
-                    <p className="text-sm text-muted-foreground">{usuario.programa}</p>
-                  )}
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/40 px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+                    <User className="size-5" />
+                  </div>
+                  <div>
+                    <p className="font-medium leading-tight">{usuario.nombre}</p>
+                    <p className="text-sm text-muted-foreground">{usuario.correo}</p>
+                    {usuario.programa && (
+                      <p className="text-sm text-muted-foreground">{usuario.programa}</p>
+                    )}
+                  </div>
                 </div>
                 <Button variant="outline" size="sm" onClick={reiniciar}>
                   Cambiar estudiante
@@ -231,11 +260,11 @@ function Index() {
           </CardContent>
         </Card>
 
-        {/* Paso 2: tipo de asesoría */}
-        {usuario && (
+        {/* Tipo de asesoría */}
+        {usuario && !reserva && (
           <Card>
             <CardHeader>
-              <CardTitle>2. Tipo de asesoría</CardTitle>
+              <CardTitle className="text-base">Tipo de asesoría</CardTitle>
               <CardDescription>Elige el acompañamiento que necesitas.</CardDescription>
             </CardHeader>
             <CardContent className="grid gap-3 sm:grid-cols-2">
@@ -244,55 +273,112 @@ function Index() {
                   key={t}
                   type="button"
                   onClick={() => elegirTipo(t)}
-                  className={`rounded-lg border px-4 py-4 text-left transition hover:border-primary ${
-                    tipo === t ? "border-primary bg-primary/5" : "bg-card"
+                  className={`rounded-xl border-2 px-4 py-4 text-left text-sm font-medium transition ${
+                    tipo === t
+                      ? "border-primary bg-primary/5 text-primary"
+                      : "border-transparent bg-muted/50 hover:border-primary/40"
                   }`}
                 >
-                  <span className="font-medium">{t}</span>
+                  {t}
                 </button>
               ))}
             </CardContent>
           </Card>
         )}
 
-        {/* Paso 3: franjas */}
-        {usuario && tipo && (
+        {/* Flujo por pasos */}
+        {usuario && tipo && !reserva && (
           <Card>
-            <CardHeader>
-              <CardTitle>3. Elige fecha y hora</CardTitle>
-              <CardDescription>Solo se muestran las franjas libres.</CardDescription>
+            <CardHeader className="gap-4">
+              <Pasos paso={paso} />
             </CardHeader>
-            <CardContent className="space-y-6">
+            <Separator />
+            <CardContent className="pt-6">
               {cargandoFranjas && (
-                <p className="text-sm text-muted-foreground">Cargando franjas disponibles…</p>
+                <p className="text-sm text-muted-foreground">Cargando disponibilidad…</p>
               )}
-              {!cargandoFranjas && disponibles.length === 0 && (
-                <p className="text-sm text-muted-foreground">
-                  No hay franjas disponibles para esta asesoría por ahora.
-                </p>
+
+              {/* Paso 1: día */}
+              {!cargandoFranjas && paso === 1 && (
+                <div className="flex flex-col items-start gap-6 md:flex-row">
+                  <div className="mx-auto rounded-xl border bg-card p-2 md:mx-0">
+                    <Calendar
+                      mode="single"
+                      locale={undefined}
+                      selected={dia ? aDate(dia) : undefined}
+                      onSelect={(d) => {
+                        if (!d) return;
+                        setDia(claveFecha(d));
+                        setSeleccion(null);
+                        setPaso(2);
+                        setMensaje(null);
+                      }}
+                      disabled={(d) => !diasConCupo.has(claveFecha(d))}
+                      className="pointer-events-auto p-3"
+                    />
+                  </div>
+                  <div className="space-y-2 text-sm text-muted-foreground">
+                    <p className="font-medium text-foreground">Selecciona un día</p>
+                    <p>
+                      Solo puedes elegir los días que tienen horarios libres para{" "}
+                      <span className="font-medium text-foreground">{tipo}</span>.
+                    </p>
+                    <p>
+                      {diasConCupo.size > 0
+                        ? `${diasConCupo.size} día(s) con disponibilidad.`
+                        : "Por ahora no hay días con disponibilidad."}
+                    </p>
+                  </div>
+                </div>
               )}
-              {!cargandoFranjas &&
-                Object.entries(porFecha).map(([fecha, lista]) => (
-                  <div key={fecha} className="space-y-2">
-                    <p className="text-sm font-medium capitalize">{formatoFecha(fecha)}</p>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {lista.map((f) => {
+
+              {/* Paso 2: hora */}
+              {!cargandoFranjas && paso === 2 && dia && (
+                <div className="space-y-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 text-sm">
+                      <CalendarDays className="size-4 text-primary" />
+                      <span className="font-medium capitalize">{formatoFecha(dia)}</span>
+                    </div>
+                    <Button variant="ghost" size="sm" onClick={() => setPaso(1)}>
+                      <ArrowLeft className="size-4" /> Cambiar día
+                    </Button>
+                  </div>
+
+                  {franjasDelDia.length === 0 ? (
+                    <div className="rounded-xl border border-dashed p-6 text-center">
+                      <p className="text-sm text-muted-foreground">
+                        No hay horarios disponibles este día.
+                      </p>
+                      <Button className="mt-4" variant="outline" onClick={() => setPaso(1)}>
+                        Elegir otro día
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {franjasDelDia.map((f) => {
                         const recurso = recursoDe(f.recurso_id);
                         const activa = seleccion?.id === f.id;
                         return (
                           <button
                             key={f.id}
                             type="button"
-                            onClick={() => setSeleccion(f)}
-                            className={`rounded-lg border px-3 py-3 text-left text-sm transition hover:border-primary ${
-                              activa ? "border-primary bg-primary/5" : "bg-card"
+                            onClick={() => {
+                              setSeleccion(f);
+                              setPaso(3);
+                            }}
+                            className={`rounded-xl border-2 p-4 text-left transition ${
+                              activa
+                                ? "border-primary bg-primary/5"
+                                : "border-border bg-card hover:border-primary/50 hover:shadow-sm"
                             }`}
                           >
-                            <span className="font-medium">
+                            <span className="flex items-center gap-2 text-sm font-semibold">
+                              <Clock className="size-4 text-primary" />
                               {hhmm(f.hora_inicio)} – {hhmm(f.hora_fin)}
                             </span>
                             {recurso && (
-                              <span className="mt-1 block text-muted-foreground">
+                              <span className="mt-2 block text-xs text-muted-foreground">
                                 {recurso.nombre}
                                 {recurso.ubicacion ? ` · ${recurso.ubicacion}` : ""}
                               </span>
@@ -301,67 +387,158 @@ function Index() {
                         );
                       })}
                     </div>
-                  </div>
-                ))}
-            </CardContent>
-          </Card>
-        )}
+                  )}
 
-        {/* Paso 4: confirmación */}
-        {usuario && seleccion && (
-          <Card>
-            <CardHeader>
-              <CardTitle>4. Confirma tu reserva</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-1 text-sm">
-                <p>
-                  <span className="text-muted-foreground">Estudiante: </span>
-                  {usuario.nombre}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">Asesoría: </span>
-                  {tipo}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">Profesional: </span>
-                  {recursoDe(seleccion.recurso_id)?.nombre ?? "—"}
-                </p>
-                <p className="capitalize">
-                  <span className="text-muted-foreground">Fecha: </span>
-                  {formatoFecha(seleccion.fecha)} · {hhmm(seleccion.hora_inicio)} –{" "}
-                  {hhmm(seleccion.hora_fin)}
-                </p>
-              </div>
-              <Button onClick={confirmar} disabled={confirmando}>
-                {confirmando ? "Reservando…" : "Confirmar reserva"}
-              </Button>
+                  {franjasOcupadasDelDia.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Horarios ya reservados
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {franjasOcupadasDelDia.map((f) => (
+                          <span
+                            key={f.id}
+                            aria-disabled="true"
+                            className="cursor-not-allowed rounded-lg border bg-muted px-3 py-1.5 text-xs text-muted-foreground line-through"
+                          >
+                            {hhmm(f.hora_inicio)} – {hhmm(f.hora_fin)}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Paso 3: confirmación */}
+              {!cargandoFranjas && paso === 3 && seleccion && (
+                <div className="space-y-5">
+                  <div className="rounded-xl border bg-card p-5">
+                    <p className="text-sm font-semibold">Revisa tu cita antes de confirmar</p>
+                    <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <Dato icono={<User className="size-4" />} titulo="Estudiante">
+                        {usuario.nombre}
+                      </Dato>
+                      <Dato icono={<User className="size-4" />} titulo="Asesor">
+                        {recursoDe(seleccion.recurso_id)?.nombre ?? "—"}
+                      </Dato>
+                      <Dato icono={<CalendarDays className="size-4" />} titulo="Fecha">
+                        <span className="capitalize">{formatoFecha(seleccion.fecha)}</span>
+                      </Dato>
+                      <Dato icono={<Clock className="size-4" />} titulo="Horario">
+                        {hhmm(seleccion.hora_inicio)} – {hhmm(seleccion.hora_fin)}
+                      </Dato>
+                      <Dato icono={<MapPin className="size-4" />} titulo="Lugar">
+                        {recursoDe(seleccion.recurso_id)?.ubicacion ?? "Por definir"}
+                      </Dato>
+                      <Dato icono={<CheckCircle2 className="size-4" />} titulo="Estado">
+                        <Badge variant="secondary">activa</Badge>
+                      </Dato>
+                    </dl>
+                  </div>
+                  <div className="flex flex-col gap-3 sm:flex-row">
+                    <Button onClick={confirmar} disabled={confirmando} className="sm:min-w-48">
+                      {confirmando ? "Confirmando…" : "Confirmar cita"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setSeleccion(null);
+                        setPaso(2);
+                      }}
+                      disabled={confirmando}
+                    >
+                      <ArrowLeft className="size-4" /> Volver / Cambiar horario
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
 
         {/* Resultado */}
-        {reserva && (
-          <Card className="border-primary">
+        {reserva && usuario && (
+          <Card className="border-primary/40">
             <CardHeader>
               <div className="flex items-center gap-2">
-                <Badge>Reserva confirmada</Badge>
+                <CheckCircle2 className="size-5 text-primary" />
+                <Badge>Cita confirmada</Badge>
                 <span className="text-sm text-muted-foreground">N.º {reserva.id}</span>
               </div>
-              <CardTitle className="pt-2">¡Listo, {usuario?.nombre.split(" ")[0]}!</CardTitle>
+              <CardTitle className="pt-2">¡Listo, {usuario.nombre.split(" ")[0]}!</CardTitle>
               <CardDescription className="capitalize">
                 {formatoFecha(reserva.fecha)} · {hhmm(reserva.hora_inicio)} –{" "}
                 {hhmm(reserva.hora_fin)}
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex flex-wrap gap-3">
+              <Button onClick={nuevaCita}>Programar otra cita</Button>
               <Button variant="outline" onClick={reiniciar}>
-                Hacer otra reserva
+                Salir
               </Button>
             </CardContent>
           </Card>
         )}
       </main>
+    </div>
+  );
+}
+
+function Pasos({ paso }: { paso: Paso }) {
+  return (
+    <div className="flex items-center gap-2 sm:gap-4">
+      {PASOS.map((p, i) => {
+        const completo = paso > p.n;
+        const actual = paso === p.n;
+        return (
+          <div key={p.n} className="flex flex-1 items-center gap-2">
+            <div
+              className={`flex size-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold transition ${
+                actual
+                  ? "bg-primary text-primary-foreground"
+                  : completo
+                    ? "bg-primary/15 text-primary"
+                    : "bg-muted text-muted-foreground"
+              }`}
+            >
+              {completo ? <CheckCircle2 className="size-4" /> : p.n}
+            </div>
+            <span
+              className={`text-xs font-medium sm:text-sm ${
+                actual ? "text-foreground" : "text-muted-foreground"
+              }`}
+            >
+              {p.titulo}
+            </span>
+            {i < PASOS.length - 1 && (
+              <div
+                className={`hidden h-px flex-1 sm:block ${completo ? "bg-primary/40" : "bg-border"}`}
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function Dato({
+  icono,
+  titulo,
+  children,
+}: {
+  icono: React.ReactNode;
+  titulo: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <span className="mt-0.5 text-primary">{icono}</span>
+      <div>
+        <dt className="text-xs uppercase tracking-wide text-muted-foreground">{titulo}</dt>
+        <dd className="text-sm font-medium">{children}</dd>
+      </div>
     </div>
   );
 }
