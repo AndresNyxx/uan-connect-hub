@@ -116,7 +116,6 @@ export async function crearReserva(input: {
       hora_inicio: input.franja.hora_inicio,
       hora_fin: input.franja.hora_fin,
       estado: "activa",
-      creada_en: ahoraSinZona(),
     }),
   });
   const creada = filas[0];
