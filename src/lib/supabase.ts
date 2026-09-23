@@ -100,29 +100,15 @@ export function franjaEstaOcupada(franjaId: number) {
   ).then((rows) => rows.length > 0);
 }
 
-function ahoraSinZona() {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` +
-    `T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-  );
-}
-
-// La tabla `reservas` no tiene valor por defecto para `id` ni `creada_en`,
-// así que ambos se calculan aquí antes de insertar.
+// `id` y `creada_en` ahora los genera la base de datos automáticamente.
 export async function crearReserva(input: {
   franja: Franja;
   usuarioId: number;
 }): Promise<Reserva> {
-  const ultimas = await request<{ id: number }[]>(`/reservas?select=id&order=id.desc&limit=1`);
-  const siguienteId = (ultimas[0]?.id ?? 0) + 1;
-
   const filas = await request<Reserva[]>(`/reservas`, {
     method: "POST",
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({
-      id: siguienteId,
       franja_id: input.franja.id,
       recurso_id: input.franja.recurso_id,
       usuario_id: input.usuarioId,
