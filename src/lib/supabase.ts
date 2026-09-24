@@ -67,10 +67,33 @@ export type Reserva = {
 
 export const TIPOS_ASESORIA = ["Orientación psicosocial", "Lectura y redacción"] as const;
 
+export class ReservaError extends Error {
+  constructor(
+    public motivo: "franja_ocupada" | "estudiante_con_reserva" | "otro",
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 export function buscarUsuarioPorCodigo(codigo: string) {
   return request<Usuario[]>(
     `/usuarios?select=id,nombre,codigo,programa,correo&codigo=eq.${encodeURIComponent(codigo.trim())}&limit=1`,
   ).then((rows) => rows[0] ?? null);
+}
+
+export function listarUsuarios() {
+  return request<Usuario[]>(`/usuarios?select=id,nombre,codigo,programa,correo&order=nombre.asc`);
+}
+
+export function reservaActivaDeUsuario(usuarioId: number) {
+  return request<Reserva[]>(
+    `/reservas?select=*&estado=eq.activa&usuario_id=eq.${usuarioId}&order=fecha.asc&limit=1`,
+  ).then((rows) => rows[0] ?? null);
+}
+
+export function obtenerRecurso(id: number) {
+  return request<Recurso[]>(`/recursos?select=*&id=eq.${id}&limit=1`).then((r) => r[0] ?? null);
 }
 
 export function listarRecursosPorTipo(tipo: string) {
@@ -105,9 +128,9 @@ export async function crearReserva(input: {
   franja: Franja;
   usuarioId: number;
 }): Promise<Reserva> {
-  const filas = await request<Reserva[]>(`/reservas`, {
+  const res = await fetch(`${REST}/reservas`, {
     method: "POST",
-    headers: { Prefer: "return=representation" },
+    headers: { ...baseHeaders, Prefer: "return=representation" },
     body: JSON.stringify({
       franja_id: input.franja.id,
       recurso_id: input.franja.recurso_id,
@@ -118,7 +141,18 @@ export async function crearReserva(input: {
       estado: "activa",
     }),
   });
-  const creada = filas[0];
-  if (!creada) throw new Error("No se pudo crear la reserva.");
+  const text = await res.text();
+  const body = text ? JSON.parse(text) : null;
+  if (!res.ok) {
+    const msg = String(body?.message ?? "");
+    // Errores lanzados por las reglas de integridad en PostgreSQL.
+    if (body?.code === "23505" || msg.includes("FRANJA_OCUPADA"))
+      throw new ReservaError("franja_ocupada", msg);
+    if (msg.includes("ESTUDIANTE_CON_RESERVA_ACTIVA"))
+      throw new ReservaError("estudiante_con_reserva", msg);
+    throw new ReservaError("otro", msg || `Error ${res.status}`);
+  }
+  const creada = (body as Reserva[])[0];
+  if (!creada) throw new ReservaError("otro", "No se pudo crear la reserva.");
   return creada;
 }

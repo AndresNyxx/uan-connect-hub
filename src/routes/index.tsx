@@ -1,27 +1,41 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { ArrowLeft, CalendarDays, CheckCircle2, Clock, MapPin, User } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  CalendarDays,
+  CheckCircle2,
+  Clock,
+  MapPin,
+  Search,
+  User,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Calendar } from "@/components/ui/calendar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import {
   TIPOS_ASESORIA,
-  buscarUsuarioPorCodigo,
+  ReservaError,
   crearReserva,
   franjaEstaOcupada,
   listarFranjas,
   listarRecursosPorTipo,
   listarReservasActivas,
+  listarUsuarios,
+  obtenerRecurso,
+  reservaActivaDeUsuario,
   type Franja,
   type Recurso,
   type Reserva,
   type Usuario,
 } from "@/lib/supabase";
+
+const MSG_FRANJA_OCUPADA =
+  "Esta franja acaba de ser reservada por otra persona. Selecciona otra hora.";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -57,15 +71,57 @@ const hhmm = (h: string) => h.slice(0, 5);
 
 type Paso = 1 | 2 | 3;
 const PASOS: { n: Paso; titulo: string }[] = [
-  { n: 1, titulo: "Día" },
-  { n: 2, titulo: "Hora" },
-  { n: 3, titulo: "Confirmación" },
+  { n: 1, titulo: "2 · Día" },
+  { n: 2, titulo: "3 · Hora" },
+  { n: 3, titulo: "4 · Confirmar" },
 ];
 
 function Index() {
-  const [codigo, setCodigo] = useState("");
-  const [buscando, setBuscando] = useState(false);
+  const [usuarios, setUsuarios] = useState<Usuario[]>([]);
+  const [cargandoUsuarios, setCargandoUsuarios] = useState(true);
+  const [filtro, setFiltro] = useState("");
   const [usuario, setUsuario] = useState<Usuario | null>(null);
+  const [verificando, setVerificando] = useState(false);
+  const [citaActiva, setCitaActiva] = useState<{ reserva: Reserva; recurso: Recurso | null } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    listarUsuarios()
+      .then(setUsuarios)
+      .catch(() => setMensaje("No pudimos cargar la lista de estudiantes."))
+      .finally(() => setCargandoUsuarios(false));
+  }, []);
+
+  const usuariosFiltrados = useMemo(() => {
+    const q = filtro.trim().toLowerCase();
+    if (!q) return usuarios;
+    return usuarios.filter(
+      (u) =>
+        u.nombre.toLowerCase().includes(q) ||
+        u.codigo.toLowerCase().includes(q) ||
+        (u.programa ?? "").toLowerCase().includes(q) ||
+        (u.correo ?? "").toLowerCase().includes(q),
+    );
+  }, [usuarios, filtro]);
+
+  async function seleccionarEstudiante(u: Usuario) {
+    setUsuario(u);
+    setCitaActiva(null);
+    setMensaje(null);
+    setVerificando(true);
+    try {
+      const activa = await reservaActivaDeUsuario(u.id);
+      if (activa) {
+        const recurso = await obtenerRecurso(activa.recurso_id).catch(() => null);
+        setCitaActiva({ reserva: activa, recurso });
+      }
+    } catch {
+      setMensaje("No pudimos verificar las reservas del estudiante. Intenta de nuevo.");
+    } finally {
+      setVerificando(false);
+    }
+  }
 
   const [tipo, setTipo] = useState<string | null>(null);
   const [cargandoFranjas, setCargandoFranjas] = useState(false);
@@ -101,23 +157,12 @@ function Index() {
   );
   const recursoDe = (id: number) => recursos.find((r) => r.id === id);
 
-  async function identificar(e: React.FormEvent) {
-    e.preventDefault();
-    if (!codigo.trim()) return;
-    setBuscando(true);
-    setMensaje(null);
+  async function refrescarOcupadas() {
     try {
-      const encontrado = await buscarUsuarioPorCodigo(codigo);
-      if (!encontrado) {
-        setMensaje("No encontramos un estudiante con ese código. Revísalo e intenta de nuevo.");
-        setUsuario(null);
-      } else {
-        setUsuario(encontrado);
-      }
+      const activas = await listarReservasActivas(franjas.map((f) => f.id));
+      setOcupadas(new Set(activas.map((r) => r.franja_id)));
     } catch {
-      setMensaje("No pudimos consultar tus datos en este momento. Intenta de nuevo.");
-    } finally {
-      setBuscando(false);
+      /* se mantiene el estado actual */
     }
   }
 
@@ -149,18 +194,31 @@ function Index() {
     if (!usuario || !seleccion) return;
     setConfirmando(true);
     setMensaje(null);
+    const volverAHoras = () => {
+      setOcupadas((prev) => new Set(prev).add(seleccion.id));
+      setSeleccion(null);
+      setPaso(2);
+      setMensaje(MSG_FRANJA_OCUPADA);
+      void refrescarOcupadas();
+    };
     try {
-      if (await franjaEstaOcupada(seleccion.id)) {
-        setOcupadas((prev) => new Set(prev).add(seleccion.id));
-        setSeleccion(null);
-        setPaso(2);
-        setMensaje("Esa hora acaba de ser reservada por otro estudiante. Elige otra.");
+      // Comprobaciones previas (la garantía real la da PostgreSQL al insertar).
+      if (await franjaEstaOcupada(seleccion.id)) return volverAHoras();
+      if (await reservaActivaDeUsuario(usuario.id)) {
+        await seleccionarEstudiante(usuario);
         return;
       }
       const nueva = await crearReserva({ franja: seleccion, usuarioId: usuario.id });
       setReserva(nueva);
       setOcupadas((prev) => new Set(prev).add(seleccion.id));
-    } catch {
+      void refrescarOcupadas();
+    } catch (e) {
+      if (e instanceof ReservaError && e.motivo === "franja_ocupada") return volverAHoras();
+      if (e instanceof ReservaError && e.motivo === "estudiante_con_reserva") {
+        await seleccionarEstudiante(usuario);
+        setMensaje("Este estudiante ya tiene una cita activa. No se puede crear otra.");
+        return;
+      }
       setMensaje("No se pudo realizar la reserva. Intenta nuevamente.");
     } finally {
       setConfirmando(false);
@@ -168,8 +226,8 @@ function Index() {
   }
 
   function reiniciar() {
-    setCodigo("");
     setUsuario(null);
+    setCitaActiva(null);
     setTipo(null);
     setRecursos([]);
     setFranjas([]);
@@ -182,11 +240,7 @@ function Index() {
   }
 
   function nuevaCita() {
-    setReserva(null);
-    setSeleccion(null);
-    setDia(null);
-    setPaso(1);
-    setMensaje(null);
+    reiniciar();
   }
 
   return (
@@ -212,41 +266,72 @@ function Index() {
           </div>
         )}
 
-        {/* Identificación */}
+        {/* Paso 1: estudiante */}
         <Card className="overflow-hidden">
           <CardHeader>
-            <CardTitle className="text-base">Identifícate</CardTitle>
+            <CardTitle className="text-base">1 · Seleccionar estudiante</CardTitle>
             <CardDescription>
-              Ingresa tu código estudiantil. No necesitas usuario ni contraseña.
+              Busca por nombre, código, programa o correo y haz clic sobre el estudiante.
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-3">
             {!usuario ? (
-              <form onSubmit={identificar} className="flex flex-col gap-3 sm:flex-row sm:items-end">
-                <div className="flex-1 space-y-2">
-                  <Label htmlFor="codigo">Código estudiantil</Label>
+              <>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
-                    id="codigo"
-                    value={codigo}
-                    onChange={(e) => setCodigo(e.target.value)}
-                    placeholder="Ej: 12242557898"
-                    inputMode="numeric"
-                    autoComplete="off"
+                    value={filtro}
+                    onChange={(e) => setFiltro(e.target.value)}
+                    placeholder="Buscar estudiante…"
+                    className="pl-9"
+                    aria-label="Buscar estudiante"
                   />
                 </div>
-                <Button type="submit" disabled={buscando || !codigo.trim()}>
-                  {buscando ? "Buscando…" : "Continuar"}
-                </Button>
-              </form>
+                <p className="text-xs text-muted-foreground">
+                  {cargandoUsuarios
+                    ? "Cargando estudiantes…"
+                    : `${usuariosFiltrados.length} de ${usuarios.length} estudiantes`}
+                </p>
+                <ul className="max-h-96 divide-y overflow-y-auto rounded-xl border bg-card">
+                  {usuariosFiltrados.map((u) => (
+                    <li key={u.id}>
+                      <button
+                        type="button"
+                        onClick={() => seleccionarEstudiante(u)}
+                        className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-primary/5"
+                      >
+                        <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                          <User className="size-4" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium">{u.nombre}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            Código {u.codigo}
+                            {u.programa ? ` · ${u.programa}` : ""}
+                          </p>
+                        </div>
+                      </button>
+                    </li>
+                  ))}
+                  {!cargandoUsuarios && usuariosFiltrados.length === 0 && (
+                    <li className="px-4 py-6 text-center text-sm text-muted-foreground">
+                      Ningún estudiante coincide con la búsqueda.
+                    </li>
+                  )}
+                </ul>
+              </>
             ) : (
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/40 px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3">
                 <div className="flex items-center gap-3">
                   <div className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary">
                     <User className="size-5" />
                   </div>
                   <div>
                     <p className="font-medium leading-tight">{usuario.nombre}</p>
-                    <p className="text-sm text-muted-foreground">{usuario.correo}</p>
+                    <p className="text-sm text-muted-foreground">
+                      Código {usuario.codigo}
+                      {usuario.correo ? ` · ${usuario.correo}` : ""}
+                    </p>
                     {usuario.programa && (
                       <p className="text-sm text-muted-foreground">{usuario.programa}</p>
                     )}
@@ -257,11 +342,46 @@ function Index() {
                 </Button>
               </div>
             )}
+            {verificando && (
+              <p className="text-sm text-muted-foreground">Verificando reservas del estudiante…</p>
+            )}
           </CardContent>
         </Card>
 
+        {/* Cita activa existente */}
+        {usuario && citaActiva && !reserva && (
+          <Card className="border-destructive/40">
+            <CardHeader>
+              <div className="flex items-center gap-2 text-destructive">
+                <AlertTriangle className="size-5" />
+                <CardTitle className="text-base">Este estudiante ya tiene una cita activa</CardTitle>
+              </div>
+              <CardDescription>
+                Solo se permite una reserva activa por estudiante. Para programar otra, primero
+                debe cancelarse o completarse la actual en Supabase.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <dl className="grid gap-3 sm:grid-cols-2">
+                <Dato icono={<CalendarDays className="size-4" />} titulo="Fecha">
+                  <span className="capitalize">{formatoFecha(citaActiva.reserva.fecha)}</span>
+                </Dato>
+                <Dato icono={<Clock className="size-4" />} titulo="Hora">
+                  {hhmm(citaActiva.reserva.hora_inicio)} – {hhmm(citaActiva.reserva.hora_fin)}
+                </Dato>
+                <Dato icono={<User className="size-4" />} titulo="Asesor / recurso">
+                  {citaActiva.recurso?.nombre ?? `Recurso ${citaActiva.reserva.recurso_id}`}
+                </Dato>
+                <Dato icono={<CheckCircle2 className="size-4" />} titulo="Estado">
+                  <Badge variant="secondary">{citaActiva.reserva.estado}</Badge>
+                </Dato>
+              </dl>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Tipo de asesoría */}
-        {usuario && !reserva && (
+        {usuario && !citaActiva && !verificando && !reserva && (
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Tipo de asesoría</CardTitle>
@@ -287,7 +407,7 @@ function Index() {
         )}
 
         {/* Flujo por pasos */}
-        {usuario && tipo && !reserva && (
+        {usuario && !citaActiva && !verificando && tipo && !reserva && (
           <Card>
             <CardHeader className="gap-4">
               <Pasos paso={paso} />
