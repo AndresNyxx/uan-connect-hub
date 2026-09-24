@@ -71,9 +71,9 @@ const hhmm = (h: string) => h.slice(0, 5);
 
 type Paso = 1 | 2 | 3;
 const PASOS: { n: Paso; titulo: string }[] = [
-  { n: 1, titulo: "Día" },
-  { n: 2, titulo: "Hora" },
-  { n: 3, titulo: "Confirmación" },
+  { n: 1, titulo: "2 · Día" },
+  { n: 2, titulo: "3 · Hora" },
+  { n: 3, titulo: "4 · Confirmar" },
 ];
 
 function Index() {
