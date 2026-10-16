@@ -224,10 +224,10 @@ function Index() {
       if (e instanceof ReservaError && e.motivo === "franja_ocupada") return volverAHoras();
       if (e instanceof ReservaError && e.motivo === "estudiante_con_reserva") {
         await seleccionarEstudiante(usuario);
-        setMensaje("Este estudiante ya tiene una cita activa. No se puede crear otra.");
+        setMensaje(MSG_RESERVA_ACTIVA);
         return;
       }
-      setMensaje("No se pudo realizar la reserva. Intenta nuevamente.");
+      setMensaje("La reserva no pudo completarse. Intenta nuevamente.");
     } finally {
       setConfirmando(false);
     }
@@ -236,6 +236,7 @@ function Index() {
   function reiniciar() {
     setUsuario(null);
     setCitaActiva(null);
+    setErrorVerificacion(false);
     setTipo(null);
     setRecursos([]);
     setFranjas([]);
@@ -253,9 +254,9 @@ function Index() {
 
   return (
     <div className="min-h-screen bg-muted/30">
-      <header className="border-b bg-primary text-primary-foreground">
+      <header className="border-b-4 border-gold bg-navy text-navy-foreground shadow-sm">
         <div className="mx-auto flex max-w-4xl items-center gap-3 px-5 py-6 sm:px-6">
-          <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary-foreground/15 text-lg font-bold tracking-tight">
+          <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-navy-foreground/15 text-lg font-bold tracking-tight">
             UAN
           </div>
           <div>
@@ -352,6 +353,18 @@ function Index() {
             )}
             {verificando && (
               <p className="text-sm text-muted-foreground">Verificando reservas del estudiante…</p>
+            )}
+            {errorVerificacion && !verificando && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3">
+                <p className="text-sm text-destructive">{MSG_ERROR_VERIFICACION}</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => usuario && seleccionarEstudiante(usuario)}
+                >
+                  Reintentar
+                </Button>
+              </div>
             )}
           </CardContent>
         </Card>
