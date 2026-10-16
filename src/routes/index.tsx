@@ -36,6 +36,10 @@ import {
 
 const MSG_FRANJA_OCUPADA =
   "Esta franja acaba de ser reservada por otra persona. Selecciona otra hora.";
+const MSG_RESERVA_ACTIVA =
+  "Ya tienes una reserva activa. Para realizar una nueva, debes cancelar o finalizar tu reserva actual.";
+const MSG_ERROR_VERIFICACION =
+  "No se pudo verificar el estado de las reservas. Por seguridad no es posible crear una reserva sin validar esta regla. Intenta de nuevo.";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -82,6 +86,7 @@ function Index() {
   const [filtro, setFiltro] = useState("");
   const [usuario, setUsuario] = useState<Usuario | null>(null);
   const [verificando, setVerificando] = useState(false);
+  const [errorVerificacion, setErrorVerificacion] = useState(false);
   const [citaActiva, setCitaActiva] = useState<{ reserva: Reserva; recurso: Recurso | null } | null>(
     null,
   );
@@ -109,6 +114,7 @@ function Index() {
     setUsuario(u);
     setCitaActiva(null);
     setMensaje(null);
+    setErrorVerificacion(false);
     setVerificando(true);
     try {
       const activa = await reservaActivaDeUsuario(u.id);
@@ -117,7 +123,9 @@ function Index() {
         setCitaActiva({ reserva: activa, recurso });
       }
     } catch {
-      setMensaje("No pudimos verificar las reservas del estudiante. Intenta de nuevo.");
+      // HU-05: sin verificación no se permite continuar con la reserva.
+      setErrorVerificacion(true);
+      setMensaje(MSG_ERROR_VERIFICACION);
     } finally {
       setVerificando(false);
     }
