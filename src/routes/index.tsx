@@ -377,10 +377,7 @@ function Index() {
                 <AlertTriangle className="size-5" />
                 <CardTitle className="text-base">Este estudiante ya tiene una cita activa</CardTitle>
               </div>
-              <CardDescription>
-                Solo se permite una reserva activa por estudiante. Para programar otra, primero
-                debe cancelarse o completarse la actual en Supabase.
-              </CardDescription>
+              <CardDescription>{MSG_RESERVA_ACTIVA}</CardDescription>
             </CardHeader>
             <CardContent>
               <dl className="grid gap-3 sm:grid-cols-2">
@@ -402,7 +399,7 @@ function Index() {
         )}
 
         {/* Tipo de asesoría */}
-        {usuario && !citaActiva && !verificando && !reserva && (
+        {usuario && !citaActiva && !verificando && !errorVerificacion && !reserva && (
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Tipo de asesoría</CardTitle>
@@ -428,7 +425,7 @@ function Index() {
         )}
 
         {/* Flujo por pasos */}
-        {usuario && !citaActiva && !verificando && tipo && !reserva && (
+        {usuario && !citaActiva && !verificando && !errorVerificacion && tipo && !reserva && (
           <Card>
             <CardHeader className="gap-4">
               <Pasos paso={paso} />
