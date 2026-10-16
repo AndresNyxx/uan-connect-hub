@@ -36,6 +36,10 @@ import {
 
 const MSG_FRANJA_OCUPADA =
   "Esta franja acaba de ser reservada por otra persona. Selecciona otra hora.";
+const MSG_RESERVA_ACTIVA =
+  "Ya tienes una reserva activa. Para realizar una nueva, debes cancelar o finalizar tu reserva actual.";
+const MSG_ERROR_VERIFICACION =
+  "No se pudo verificar el estado de las reservas. Por seguridad no es posible crear una reserva sin validar esta regla. Intenta de nuevo.";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -82,6 +86,7 @@ function Index() {
   const [filtro, setFiltro] = useState("");
   const [usuario, setUsuario] = useState<Usuario | null>(null);
   const [verificando, setVerificando] = useState(false);
+  const [errorVerificacion, setErrorVerificacion] = useState(false);
   const [citaActiva, setCitaActiva] = useState<{ reserva: Reserva; recurso: Recurso | null } | null>(
     null,
   );
@@ -109,6 +114,7 @@ function Index() {
     setUsuario(u);
     setCitaActiva(null);
     setMensaje(null);
+    setErrorVerificacion(false);
     setVerificando(true);
     try {
       const activa = await reservaActivaDeUsuario(u.id);
@@ -117,7 +123,9 @@ function Index() {
         setCitaActiva({ reserva: activa, recurso });
       }
     } catch {
-      setMensaje("No pudimos verificar las reservas del estudiante. Intenta de nuevo.");
+      // HU-05: sin verificación no se permite continuar con la reserva.
+      setErrorVerificacion(true);
+      setMensaje(MSG_ERROR_VERIFICACION);
     } finally {
       setVerificando(false);
     }
@@ -216,10 +224,10 @@ function Index() {
       if (e instanceof ReservaError && e.motivo === "franja_ocupada") return volverAHoras();
       if (e instanceof ReservaError && e.motivo === "estudiante_con_reserva") {
         await seleccionarEstudiante(usuario);
-        setMensaje("Este estudiante ya tiene una cita activa. No se puede crear otra.");
+        setMensaje(MSG_RESERVA_ACTIVA);
         return;
       }
-      setMensaje("No se pudo realizar la reserva. Intenta nuevamente.");
+      setMensaje("La reserva no pudo completarse. Intenta nuevamente.");
     } finally {
       setConfirmando(false);
     }
@@ -228,6 +236,7 @@ function Index() {
   function reiniciar() {
     setUsuario(null);
     setCitaActiva(null);
+    setErrorVerificacion(false);
     setTipo(null);
     setRecursos([]);
     setFranjas([]);
@@ -245,9 +254,9 @@ function Index() {
 
   return (
     <div className="min-h-screen bg-muted/30">
-      <header className="border-b bg-primary text-primary-foreground">
+      <header className="border-b-4 border-gold bg-navy text-navy-foreground shadow-sm">
         <div className="mx-auto flex max-w-4xl items-center gap-3 px-5 py-6 sm:px-6">
-          <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary-foreground/15 text-lg font-bold tracking-tight">
+          <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-navy-foreground/15 text-lg font-bold tracking-tight">
             UAN
           </div>
           <div>
@@ -345,6 +354,18 @@ function Index() {
             {verificando && (
               <p className="text-sm text-muted-foreground">Verificando reservas del estudiante…</p>
             )}
+            {errorVerificacion && !verificando && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3">
+                <p className="text-sm text-destructive">{MSG_ERROR_VERIFICACION}</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => usuario && seleccionarEstudiante(usuario)}
+                >
+                  Reintentar
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -356,10 +377,7 @@ function Index() {
                 <AlertTriangle className="size-5" />
                 <CardTitle className="text-base">Este estudiante ya tiene una cita activa</CardTitle>
               </div>
-              <CardDescription>
-                Solo se permite una reserva activa por estudiante. Para programar otra, primero
-                debe cancelarse o completarse la actual en Supabase.
-              </CardDescription>
+              <CardDescription>{MSG_RESERVA_ACTIVA}</CardDescription>
             </CardHeader>
             <CardContent>
               <dl className="grid gap-3 sm:grid-cols-2">
@@ -381,7 +399,7 @@ function Index() {
         )}
 
         {/* Tipo de asesoría */}
-        {usuario && !citaActiva && !verificando && !reserva && (
+        {usuario && !citaActiva && !verificando && !errorVerificacion && !reserva && (
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Tipo de asesoría</CardTitle>
@@ -407,7 +425,7 @@ function Index() {
         )}
 
         {/* Flujo por pasos */}
-        {usuario && !citaActiva && !verificando && tipo && !reserva && (
+        {usuario && !citaActiva && !verificando && !errorVerificacion && tipo && !reserva && (
           <Card>
             <CardHeader className="gap-4">
               <Pasos paso={paso} />
