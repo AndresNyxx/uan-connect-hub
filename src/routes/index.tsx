@@ -72,6 +72,8 @@ const aDate = (fecha: string) => {
 const formatoFecha = (fecha: string) =>
   aDate(fecha).toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" });
 const hhmm = (h: string) => h.slice(0, 5);
+// Una franja ya transcurrida (fecha y hora de inicio anteriores al momento actual) no es elegible.
+const esPasada = (f: Franja) => new Date(`${f.fecha}T${f.hora_inicio}`) <= new Date();
 
 type Paso = 1 | 2 | 3;
 const PASOS: { n: Paso; titulo: string }[] = [
@@ -145,23 +147,20 @@ function Index() {
   const [mensaje, setMensaje] = useState<string | null>(null);
 
   const disponibles = useMemo(
-    () => franjas.filter((f) => !ocupadas.has(f.id)),
+    () => franjas.filter((f) => !ocupadas.has(f.id) && !esPasada(f)),
     [franjas, ocupadas],
   );
   const diasConCupo = useMemo(
     () => new Set(disponibles.map((f) => f.fecha)),
     [disponibles],
   );
+  // Todas las franjas vigentes del día (libres y ocupadas) para mostrar la disponibilidad completa.
   const franjasDelDia = useMemo(
     () =>
-      disponibles
-        .filter((f) => f.fecha === dia)
+      franjas
+        .filter((f) => f.fecha === dia && !esPasada(f))
         .sort((a, b) => a.hora_inicio.localeCompare(b.hora_inicio)),
-    [disponibles, dia],
-  );
-  const franjasOcupadasDelDia = useMemo(
-    () => franjas.filter((f) => f.fecha === dia && ocupadas.has(f.id)),
-    [franjas, ocupadas, dia],
+    [franjas, dia],
   );
   const recursoDe = (id: number) => recursos.find((r) => r.id === id);
 
@@ -451,7 +450,9 @@ function Index() {
                         setPaso(2);
                         setMensaje(null);
                       }}
-                      disabled={(d) => !diasConCupo.has(claveFecha(d))}
+                      disabled={(d) =>
+                        claveFecha(d) < hoyISO() || !diasConCupo.has(claveFecha(d))
+                      }
                       className="pointer-events-auto p-3"
                     />
                   </div>
@@ -496,7 +497,31 @@ function Index() {
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                       {franjasDelDia.map((f) => {
                         const recurso = recursoDe(f.recurso_id);
+                        const ocupada = ocupadas.has(f.id);
                         const activa = seleccion?.id === f.id;
+                        if (ocupada) {
+                          return (
+                            <div
+                              key={f.id}
+                              aria-disabled="true"
+                              className="cursor-not-allowed rounded-xl border-2 border-dashed bg-muted/60 p-4 text-left opacity-70"
+                            >
+                              <span className="flex items-center justify-between gap-2 text-sm font-semibold text-muted-foreground">
+                                <span className="flex items-center gap-2 line-through">
+                                  <Clock className="size-4" />
+                                  {hhmm(f.hora_inicio)} – {hhmm(f.hora_fin)}
+                                </span>
+                                <Badge variant="secondary">Ocupada</Badge>
+                              </span>
+                              {recurso && (
+                                <span className="mt-2 block text-xs text-muted-foreground">
+                                  {recurso.nombre}
+                                  {recurso.ubicacion ? ` · ${recurso.ubicacion}` : ""}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        }
                         return (
                           <button
                             key={f.id}
@@ -511,9 +536,12 @@ function Index() {
                                 : "border-border bg-card hover:border-primary/50 hover:shadow-sm"
                             }`}
                           >
-                            <span className="flex items-center gap-2 text-sm font-semibold">
-                              <Clock className="size-4 text-primary" />
-                              {hhmm(f.hora_inicio)} – {hhmm(f.hora_fin)}
+                            <span className="flex items-center justify-between gap-2 text-sm font-semibold">
+                              <span className="flex items-center gap-2">
+                                <Clock className="size-4 text-primary" />
+                                {hhmm(f.hora_inicio)} – {hhmm(f.hora_fin)}
+                              </span>
+                              <Badge>Libre</Badge>
                             </span>
                             {recurso && (
                               <span className="mt-2 block text-xs text-muted-foreground">
@@ -524,25 +552,6 @@ function Index() {
                           </button>
                         );
                       })}
-                    </div>
-                  )}
-
-                  {franjasOcupadasDelDia.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                        Horarios ya reservados
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {franjasOcupadasDelDia.map((f) => (
-                          <span
-                            key={f.id}
-                            aria-disabled="true"
-                            className="cursor-not-allowed rounded-lg border bg-muted px-3 py-1.5 text-xs text-muted-foreground line-through"
-                          >
-                            {hhmm(f.hora_inicio)} – {hhmm(f.hora_fin)}
-                          </span>
-                        ))}
-                      </div>
                     </div>
                   )}
                 </div>
