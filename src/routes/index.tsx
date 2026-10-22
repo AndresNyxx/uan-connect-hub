@@ -72,6 +72,8 @@ const aDate = (fecha: string) => {
 const formatoFecha = (fecha: string) =>
   aDate(fecha).toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" });
 const hhmm = (h: string) => h.slice(0, 5);
+// Una franja ya transcurrida (fecha y hora de inicio anteriores al momento actual) no es elegible.
+const esPasada = (f: Franja) => new Date(`${f.fecha}T${f.hora_inicio}`) <= new Date();
 
 type Paso = 1 | 2 | 3;
 const PASOS: { n: Paso; titulo: string }[] = [
@@ -145,23 +147,20 @@ function Index() {
   const [mensaje, setMensaje] = useState<string | null>(null);
 
   const disponibles = useMemo(
-    () => franjas.filter((f) => !ocupadas.has(f.id)),
+    () => franjas.filter((f) => !ocupadas.has(f.id) && !esPasada(f)),
     [franjas, ocupadas],
   );
   const diasConCupo = useMemo(
     () => new Set(disponibles.map((f) => f.fecha)),
     [disponibles],
   );
+  // Todas las franjas vigentes del día (libres y ocupadas) para mostrar la disponibilidad completa.
   const franjasDelDia = useMemo(
     () =>
-      disponibles
-        .filter((f) => f.fecha === dia)
+      franjas
+        .filter((f) => f.fecha === dia && !esPasada(f))
         .sort((a, b) => a.hora_inicio.localeCompare(b.hora_inicio)),
-    [disponibles, dia],
-  );
-  const franjasOcupadasDelDia = useMemo(
-    () => franjas.filter((f) => f.fecha === dia && ocupadas.has(f.id)),
-    [franjas, ocupadas, dia],
+    [franjas, dia],
   );
   const recursoDe = (id: number) => recursos.find((r) => r.id === id);
 
