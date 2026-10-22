@@ -450,7 +450,9 @@ function Index() {
                         setPaso(2);
                         setMensaje(null);
                       }}
-                      disabled={(d) => !diasConCupo.has(claveFecha(d))}
+                      disabled={(d) =>
+                        claveFecha(d) < hoyISO() || !diasConCupo.has(claveFecha(d))
+                      }
                       className="pointer-events-auto p-3"
                     />
                   </div>
@@ -495,7 +497,31 @@ function Index() {
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                       {franjasDelDia.map((f) => {
                         const recurso = recursoDe(f.recurso_id);
+                        const ocupada = ocupadas.has(f.id);
                         const activa = seleccion?.id === f.id;
+                        if (ocupada) {
+                          return (
+                            <div
+                              key={f.id}
+                              aria-disabled="true"
+                              className="cursor-not-allowed rounded-xl border-2 border-dashed bg-muted/60 p-4 text-left opacity-70"
+                            >
+                              <span className="flex items-center justify-between gap-2 text-sm font-semibold text-muted-foreground">
+                                <span className="flex items-center gap-2 line-through">
+                                  <Clock className="size-4" />
+                                  {hhmm(f.hora_inicio)} – {hhmm(f.hora_fin)}
+                                </span>
+                                <Badge variant="secondary">Ocupada</Badge>
+                              </span>
+                              {recurso && (
+                                <span className="mt-2 block text-xs text-muted-foreground">
+                                  {recurso.nombre}
+                                  {recurso.ubicacion ? ` · ${recurso.ubicacion}` : ""}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        }
                         return (
                           <button
                             key={f.id}
@@ -510,9 +536,12 @@ function Index() {
                                 : "border-border bg-card hover:border-primary/50 hover:shadow-sm"
                             }`}
                           >
-                            <span className="flex items-center gap-2 text-sm font-semibold">
-                              <Clock className="size-4 text-primary" />
-                              {hhmm(f.hora_inicio)} – {hhmm(f.hora_fin)}
+                            <span className="flex items-center justify-between gap-2 text-sm font-semibold">
+                              <span className="flex items-center gap-2">
+                                <Clock className="size-4 text-primary" />
+                                {hhmm(f.hora_inicio)} – {hhmm(f.hora_fin)}
+                              </span>
+                              <Badge>Libre</Badge>
                             </span>
                             {recurso && (
                               <span className="mt-2 block text-xs text-muted-foreground">
@@ -523,25 +552,6 @@ function Index() {
                           </button>
                         );
                       })}
-                    </div>
-                  )}
-
-                  {franjasOcupadasDelDia.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                        Horarios ya reservados
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {franjasOcupadasDelDia.map((f) => (
-                          <span
-                            key={f.id}
-                            aria-disabled="true"
-                            className="cursor-not-allowed rounded-lg border bg-muted px-3 py-1.5 text-xs text-muted-foreground line-through"
-                          >
-                            {hhmm(f.hora_inicio)} – {hhmm(f.hora_fin)}
-                          </span>
-                        ))}
-                      </div>
                     </div>
                   )}
                 </div>
