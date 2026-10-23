@@ -67,9 +67,38 @@ export type Reserva = {
 
 export const TIPOS_ASESORIA = ["Orientación psicosocial", "Lectura y redacción"] as const;
 
+// Fecha y hora actuales en Colombia (America/Bogota), sin depender de la zona del navegador.
+export function ahoraEnColombia(): { fecha: string; hora: string } {
+  const partes = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Bogota",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+  const get = (t: string) => partes.find((p) => p.type === t)?.value ?? "";
+  const hora = get("hour") === "24" ? "00" : get("hour");
+  return {
+    fecha: `${get("year")}-${get("month")}-${get("day")}`,
+    hora: `${hora}:${get("minute")}:${get("second")}`,
+  };
+}
+
+// Una reserva "activa" solo bloquea si todavía está vigente (su fecha/hora no ha pasado).
+// Las activas ya vencidas quedan como historial y no impiden una nueva reserva.
+export function reservaVigente(
+  r: Pick<Reserva, "fecha" | "hora_fin">,
+  ahora: { fecha: string; hora: string } = ahoraEnColombia(),
+) {
+  return r.fecha > ahora.fecha || (r.fecha === ahora.fecha && r.hora_fin > ahora.hora);
+}
+
 export class ReservaError extends Error {
   constructor(
-    public motivo: "franja_ocupada" | "estudiante_con_reserva" | "otro",
+    public motivo: "franja_ocupada" | "estudiante_con_reserva" | "franja_pasada" | "otro",
     message: string,
   ) {
     super(message);
@@ -86,10 +115,13 @@ export function listarUsuarios() {
   return request<Usuario[]>(`/usuarios?select=id,nombre,codigo,programa,correo&order=nombre.asc`);
 }
 
+// Devuelve la reserva activa VIGENTE del estudiante (si existe). Las reservas
+// activas cuya fecha/hora ya pasó se consideran historial y no bloquean.
 export function reservaActivaDeUsuario(usuarioId: number) {
+  const ahora = ahoraEnColombia();
   return request<Reserva[]>(
-    `/reservas?select=*&estado=eq.activa&usuario_id=eq.${usuarioId}&order=fecha.asc&limit=1`,
-  ).then((rows) => rows[0] ?? null);
+    `/reservas?select=*&estado=eq.activa&usuario_id=eq.${usuarioId}&fecha=gte.${ahora.fecha}&order=fecha.asc`,
+  ).then((rows) => rows.find((r) => reservaVigente(r, ahora)) ?? null);
 }
 
 export function obtenerRecurso(id: number) {
@@ -128,6 +160,14 @@ export async function crearReserva(input: {
   franja: Franja;
   usuarioId: number;
 }): Promise<Reserva> {
+  // Validación también al guardar: no se pueden reservar franjas ya transcurridas.
+  const ahora = ahoraEnColombia();
+  if (
+    input.franja.fecha < ahora.fecha ||
+    (input.franja.fecha === ahora.fecha && input.franja.hora_inicio <= ahora.hora)
+  ) {
+    throw new ReservaError("franja_pasada", "La fecha u hora de la franja ya pasó.");
+  }
   const res = await fetch(`${REST}/reservas`, {
     method: "POST",
     headers: { ...baseHeaders, Prefer: "return=representation" },
@@ -150,6 +190,7 @@ export async function crearReserva(input: {
       throw new ReservaError("franja_ocupada", msg);
     if (msg.includes("ESTUDIANTE_CON_RESERVA_ACTIVA"))
       throw new ReservaError("estudiante_con_reserva", msg);
+    if (msg.includes("FRANJA_YA_PASO")) throw new ReservaError("franja_pasada", msg);
     throw new ReservaError("otro", msg || `Error ${res.status}`);
   }
   const creada = (body as Reserva[])[0];

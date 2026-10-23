@@ -20,6 +20,7 @@ import { Separator } from "@/components/ui/separator";
 import {
   TIPOS_ASESORIA,
   ReservaError,
+  ahoraEnColombia,
   crearReserva,
   franjaEstaOcupada,
   listarFranjas,
@@ -36,6 +37,7 @@ import {
 
 const MSG_FRANJA_OCUPADA =
   "Esta franja acaba de ser reservada por otra persona. Selecciona otra hora.";
+const MSG_FRANJA_PASADA = "Esta franja ya pasó. Selecciona otra hora.";
 const MSG_RESERVA_ACTIVA =
   "Ya tienes una reserva activa. Para realizar una nueva, debes cancelar o finalizar tu reserva actual.";
 const MSG_ERROR_VERIFICACION =
@@ -64,7 +66,7 @@ export const Route = createFileRoute("/")({
 
 const p2 = (n: number) => String(n).padStart(2, "0");
 const claveFecha = (d: Date) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
-const hoyISO = () => claveFecha(new Date());
+const hoyISO = () => ahoraEnColombia().fecha;
 const aDate = (fecha: string) => {
   const [y, m, d] = fecha.split("-").map(Number);
   return new Date(y!, (m ?? 1) - 1, d ?? 1);
@@ -72,8 +74,12 @@ const aDate = (fecha: string) => {
 const formatoFecha = (fecha: string) =>
   aDate(fecha).toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" });
 const hhmm = (h: string) => h.slice(0, 5);
-// Una franja ya transcurrida (fecha y hora de inicio anteriores al momento actual) no es elegible.
-const esPasada = (f: Franja) => new Date(`${f.fecha}T${f.hora_inicio}`) <= new Date();
+// Una franja ya transcurrida (fecha y hora de inicio anteriores al momento actual,
+// en hora de Colombia) no es elegible.
+const esPasada = (f: Franja) => {
+  const ahora = ahoraEnColombia();
+  return f.fecha < ahora.fecha || (f.fecha === ahora.fecha && f.hora_inicio <= ahora.hora);
+};
 
 type Paso = 1 | 2 | 3;
 const PASOS: { n: Paso; titulo: string }[] = [
@@ -221,6 +227,13 @@ function Index() {
       void refrescarOcupadas();
     } catch (e) {
       if (e instanceof ReservaError && e.motivo === "franja_ocupada") return volverAHoras();
+      if (e instanceof ReservaError && e.motivo === "franja_pasada") {
+        setSeleccion(null);
+        setPaso(2);
+        setMensaje(MSG_FRANJA_PASADA);
+        void refrescarOcupadas();
+        return;
+      }
       if (e instanceof ReservaError && e.motivo === "estudiante_con_reserva") {
         await seleccionarEstudiante(usuario);
         setMensaje(MSG_RESERVA_ACTIVA);
@@ -398,7 +411,7 @@ function Index() {
         )}
 
         {/* Tipo de asesoría */}
-        {usuario && !citaActiva && !verificando && !errorVerificacion && !reserva && (
+        {usuario && !verificando && !errorVerificacion && !reserva && (
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Tipo de asesoría</CardTitle>
@@ -424,7 +437,7 @@ function Index() {
         )}
 
         {/* Flujo por pasos */}
-        {usuario && !citaActiva && !verificando && !errorVerificacion && tipo && !reserva && (
+        {usuario && !verificando && !errorVerificacion && tipo && !reserva && (
           <Card>
             <CardHeader className="gap-4">
               <Pasos paso={paso} />
@@ -583,8 +596,17 @@ function Index() {
                       </Dato>
                     </dl>
                   </div>
+                  {citaActiva && (
+                    <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                      {MSG_RESERVA_ACTIVA}
+                    </div>
+                  )}
                   <div className="flex flex-col gap-3 sm:flex-row">
-                    <Button onClick={confirmar} disabled={confirmando} className="sm:min-w-48">
+                    <Button
+                      onClick={confirmar}
+                      disabled={confirmando || !!citaActiva}
+                      className="sm:min-w-48"
+                    >
                       {confirmando ? "Confirmando…" : "Confirmar cita"}
                     </Button>
                     <Button
