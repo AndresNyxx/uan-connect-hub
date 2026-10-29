@@ -383,7 +383,7 @@ function Index() {
         </Card>
 
         {/* Mis reservas: cancelación por el propio estudiante */}
-        {usuario && !verificando && (
+        {usuario && (
           <MisReservas
             usuario={usuario}
             version={reserva?.id ?? 0}
