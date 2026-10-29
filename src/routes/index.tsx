@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { MisReservas } from "@/components/MisReservas";
 import { Input } from "@/components/ui/input";
 import { Calendar } from "@/components/ui/calendar";
 import { Badge } from "@/components/ui/badge";
@@ -380,6 +381,18 @@ function Index() {
             )}
           </CardContent>
         </Card>
+
+        {/* Mis reservas: cancelación por el propio estudiante */}
+        {usuario && !verificando && (
+          <MisReservas
+            usuario={usuario}
+            version={reserva?.id ?? 0}
+            onCancelada={() => {
+              seleccionarEstudiante(usuario);
+              refrescarOcupadas();
+            }}
+          />
+        )}
 
         {/* Cita activa existente */}
         {usuario && citaActiva && !reserva && (
