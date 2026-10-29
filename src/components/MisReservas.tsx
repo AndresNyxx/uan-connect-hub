@@ -18,7 +18,6 @@ import {
 import {
   CancelacionError,
   cancelarReserva,
-  listarUsuarios,
   obtenerRecurso,
   reservaVigente,
   reservasDeUsuario,
@@ -27,7 +26,6 @@ import {
   type Usuario,
 } from "@/lib/supabase";
 
-void listarUsuarios;
 
 const hhmm = (t: string) => t.slice(0, 5);
 const fecha = (f: string) => format(parseISO(f), "EEEE d 'de' MMMM yyyy", { locale: es });
