@@ -155,6 +155,45 @@ export function franjaEstaOcupada(franjaId: number) {
   ).then((rows) => rows.length > 0);
 }
 
+// "Mis reservas": todas las reservas del estudiante, más recientes primero.
+export function reservasDeUsuario(usuarioId: number) {
+  return request<Reserva[]>(
+    `/reservas?select=*&usuario_id=eq.${usuarioId}&order=fecha.desc&order=hora_inicio.desc`,
+  );
+}
+
+export class CancelacionError extends Error {
+  constructor(
+    public motivo: "no_pertenece" | "no_activa" | "no_existe" | "sin_funcion" | "otro",
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+// Cancela mediante la función segura `cancelar_reserva` (ver supabase/cancelar_reserva.sql),
+// que verifica en la base de datos que la reserva pertenezca al estudiante.
+export async function cancelarReserva(reservaId: number, usuarioId: number): Promise<Reserva> {
+  const res = await fetch(`${REST}/rpc/cancelar_reserva`, {
+    method: "POST",
+    headers: baseHeaders,
+    body: JSON.stringify({ p_reserva_id: reservaId, p_usuario_id: usuarioId }),
+  });
+  const text = await res.text();
+  const body = text ? JSON.parse(text) : null;
+  if (!res.ok) {
+    const msg = String(body?.message ?? "");
+    if (body?.code === "PGRST202") throw new CancelacionError("sin_funcion", msg);
+    if (msg.includes("RESERVA_NO_PERTENECE")) throw new CancelacionError("no_pertenece", msg);
+    if (msg.includes("RESERVA_NO_ACTIVA")) throw new CancelacionError("no_activa", msg);
+    if (msg.includes("RESERVA_NO_EXISTE")) throw new CancelacionError("no_existe", msg);
+    throw new CancelacionError("otro", msg || `Error ${res.status}`);
+  }
+  const r = body as Reserva;
+  if (!r || r.estado !== "cancelada") throw new CancelacionError("otro", "Sin confirmación.");
+  return r;
+}
+
 // `id` y `creada_en` ahora los genera la base de datos automáticamente.
 export async function crearReserva(input: {
   franja: Franja;
