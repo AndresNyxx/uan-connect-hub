@@ -18,8 +18,21 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
   TIPOS_ASESORIA,
   ReservaError,
+  CancelacionError,
+  cancelarReserva,
   ahoraEnColombia,
   crearReserva,
   franjaEstaOcupada,
@@ -118,9 +131,46 @@ function Index() {
     );
   }, [usuarios, filtro]);
 
+  const [cancelando, setCancelando] = useState(false);
+  const [errorCancelacion, setErrorCancelacion] = useState<string | null>(null);
+  const [avisoCancelacion, setAvisoCancelacion] = useState<string | null>(null);
+
+  async function cancelarCita() {
+    if (!usuario || !citaActiva) return;
+    // Validación funcional: la reserva debe pertenecer al estudiante seleccionado.
+    if (citaActiva.reserva.usuario_id !== usuario.id) {
+      setErrorCancelacion("Esta reserva no pertenece al estudiante seleccionado.");
+      return;
+    }
+    setCancelando(true);
+    setErrorCancelacion(null);
+    try {
+      await cancelarReserva(citaActiva.reserva.id, usuario.id);
+      setCitaActiva(null);
+      setAvisoCancelacion("Tu reserva fue cancelada. El horario quedó libre y ya puedes programar una nueva.");
+      refrescarOcupadas();
+    } catch (e) {
+      const motivo = e instanceof CancelacionError ? e.motivo : "otro";
+      setErrorCancelacion(
+        motivo === "no_habilitada"
+          ? "La cancelación aún no está habilitada en la base de datos."
+          : motivo === "no_pertenece"
+            ? "Esta reserva no pertenece al estudiante seleccionado."
+            : motivo === "no_activa"
+              ? "Esta reserva ya no está activa."
+              : "No se pudo cancelar la reserva. Inténtalo de nuevo.",
+      );
+      if (motivo === "no_activa") setCitaActiva(null);
+    } finally {
+      setCancelando(false);
+    }
+  }
+
   async function seleccionarEstudiante(u: Usuario) {
     setUsuario(u);
     setCitaActiva(null);
+    setErrorCancelacion(null);
+    setAvisoCancelacion(null);
     setMensaje(null);
     setErrorVerificacion(false);
     setVerificando(true);
@@ -381,32 +431,63 @@ function Index() {
           </CardContent>
         </Card>
 
-        {/* Cita activa existente */}
-        {usuario && citaActiva && !reserva && (
-          <Card className="border-destructive/40">
+        {/* Mis reservas: como máximo una reserva activa vigente por estudiante */}
+        {usuario && !verificando && !errorVerificacion && !reserva && (
+          <Card className={citaActiva ? "border-destructive/40" : undefined}>
             <CardHeader>
-              <div className="flex items-center gap-2 text-destructive">
-                <AlertTriangle className="size-5" />
-                <CardTitle className="text-base">Este estudiante ya tiene una cita activa</CardTitle>
-              </div>
-              <CardDescription>{MSG_RESERVA_ACTIVA}</CardDescription>
+              <CardTitle className="text-base">Mis reservas</CardTitle>
+              {citaActiva ? (
+                <CardDescription>{MSG_RESERVA_ACTIVA}</CardDescription>
+              ) : (
+                <CardDescription>
+                  {avisoCancelacion ?? "No tienes una reserva activa. Puedes programar una nueva."}
+                </CardDescription>
+              )}
             </CardHeader>
-            <CardContent>
-              <dl className="grid gap-3 sm:grid-cols-2">
-                <Dato icono={<CalendarDays className="size-4" />} titulo="Fecha">
-                  <span className="capitalize">{formatoFecha(citaActiva.reserva.fecha)}</span>
-                </Dato>
-                <Dato icono={<Clock className="size-4" />} titulo="Hora">
-                  {hhmm(citaActiva.reserva.hora_inicio)} – {hhmm(citaActiva.reserva.hora_fin)}
-                </Dato>
-                <Dato icono={<User className="size-4" />} titulo="Asesor / recurso">
-                  {citaActiva.recurso?.nombre ?? `Recurso ${citaActiva.reserva.recurso_id}`}
-                </Dato>
-                <Dato icono={<CheckCircle2 className="size-4" />} titulo="Estado">
-                  <Badge variant="secondary">{citaActiva.reserva.estado}</Badge>
-                </Dato>
-              </dl>
-            </CardContent>
+            {citaActiva && (
+              <CardContent className="space-y-4">
+                <dl className="grid gap-3 sm:grid-cols-2">
+                  <Dato icono={<CalendarDays className="size-4" />} titulo="Fecha">
+                    <span className="capitalize">{formatoFecha(citaActiva.reserva.fecha)}</span>
+                  </Dato>
+                  <Dato icono={<Clock className="size-4" />} titulo="Hora">
+                    {hhmm(citaActiva.reserva.hora_inicio)} – {hhmm(citaActiva.reserva.hora_fin)}
+                  </Dato>
+                  <Dato icono={<User className="size-4" />} titulo="Asesor / recurso">
+                    {citaActiva.recurso?.nombre ?? `Recurso ${citaActiva.reserva.recurso_id}`}
+                  </Dato>
+                  <Dato icono={<CheckCircle2 className="size-4" />} titulo="Estado">
+                    <Badge variant="secondary">{citaActiva.reserva.estado}</Badge>
+                  </Dato>
+                </dl>
+                {errorCancelacion && (
+                  <p className="text-sm text-destructive">{errorCancelacion}</p>
+                )}
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="destructive" disabled={cancelando}>
+                      {cancelando ? "Cancelando…" : "Cancelar reserva"}
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>¿Cancelar esta reserva?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Se cancelará tu cita del{" "}
+                        {formatoFecha(citaActiva.reserva.fecha)} de{" "}
+                        {hhmm(citaActiva.reserva.hora_inicio)} a{" "}
+                        {hhmm(citaActiva.reserva.hora_fin)}. El horario quedará disponible
+                        para otros estudiantes.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>No, mantener</AlertDialogCancel>
+                      <AlertDialogAction onClick={cancelarCita}>Sí, cancelar</AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </CardContent>
+            )}
           </Card>
         )}
 
