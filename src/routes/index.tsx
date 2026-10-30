@@ -306,6 +306,15 @@ function Index() {
         return;
       }
       if (e instanceof ReservaError && e.motivo === "estudiante_con_reserva") {
+        // Si la app no encuentra ninguna cita vigente, la base de datos está usando
+        // una regla antigua que cuenta citas "activa" ya vencidas como vigentes.
+        const vigente = await reservaActivaDeUsuario(usuario.id).catch(() => null);
+        if (!vigente) {
+          setMensaje(
+            "La base de datos rechazó la cita porque aún cuenta citas pasadas como activas. Ejecuta la regla actualizada (integridad_reservas.sql) en el editor SQL de Supabase y vuelve a intentarlo.",
+          );
+          return;
+        }
         await seleccionarEstudiante(usuario);
         setMensaje(MSG_RESERVA_ACTIVA);
         return;
