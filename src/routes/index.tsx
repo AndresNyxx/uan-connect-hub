@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertTriangle,
   ArrowLeft,
   CalendarDays,
   CheckCircle2,
@@ -17,6 +16,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { MisReservas } from "@/components/mis-reservas";
 import {
   TIPOS_ASESORIA,
   ReservaError,
@@ -69,7 +69,7 @@ const claveFecha = (d: Date) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2
 const hoyISO = () => ahoraEnColombia().fecha;
 const aDate = (fecha: string) => {
   const [y, m, d] = fecha.split("-").map(Number);
-  return new Date(y!, (m ?? 1) - 1, d ?? 1);
+  return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1);
 };
 const formatoFecha = (fecha: string) =>
   aDate(fecha).toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" });
@@ -93,6 +93,8 @@ function Index() {
   const [cargandoUsuarios, setCargandoUsuarios] = useState(true);
   const [filtro, setFiltro] = useState("");
   const [usuario, setUsuario] = useState<Usuario | null>(null);
+  const usuarioActual = useRef<number | null>(null);
+  const [cancelando, setCancelando] = useState(false);
   const [verificando, setVerificando] = useState(false);
   const [errorVerificacion, setErrorVerificacion] = useState(false);
   const [citaActiva, setCitaActiva] = useState<{ reserva: Reserva; recurso: Recurso | null } | null>(
@@ -119,6 +121,7 @@ function Index() {
   }, [usuarios, filtro]);
 
   async function seleccionarEstudiante(u: Usuario) {
+    usuarioActual.current = u.id;
     setUsuario(u);
     setCitaActiva(null);
     setMensaje(null);
@@ -126,16 +129,19 @@ function Index() {
     setVerificando(true);
     try {
       const activa = await reservaActivaDeUsuario(u.id);
+      if (usuarioActual.current !== u.id) return;
       if (activa) {
         const recurso = await obtenerRecurso(activa.recurso_id).catch(() => null);
+        if (usuarioActual.current !== u.id) return;
         setCitaActiva({ reserva: activa, recurso });
       }
     } catch {
+      if (usuarioActual.current !== u.id) return;
       // HU-05: sin verificación no se permite continuar con la reserva.
       setErrorVerificacion(true);
       setMensaje(MSG_ERROR_VERIFICACION);
     } finally {
-      setVerificando(false);
+      if (usuarioActual.current === u.id) setVerificando(false);
     }
   }
 
@@ -179,6 +185,70 @@ function Index() {
     }
   }
 
+  // Releer en otras pestañas y mientras se consulta disponibilidad. La verificación
+  // final y la integridad SQL siguen siendo necesarias aunque esta lectura falle.
+  useEffect(() => {
+    if (!tipo || franjas.length === 0 || confirmando || cancelando) return;
+    const actualizar = () => { void refrescarOcupadas(); };
+    const alVolver = () => { if (document.visibilityState === "visible") actualizar(); };
+    const intervalo = window.setInterval(actualizar, 15000);
+    window.addEventListener("focus", actualizar);
+    document.addEventListener("visibilitychange", alVolver);
+    return () => {
+      window.clearInterval(intervalo);
+      window.removeEventListener("focus", actualizar);
+      document.removeEventListener("visibilitychange", alVolver);
+    };
+  }, [tipo, franjas, confirmando, cancelando]);
+
+  async function actualizarMisReservas() {
+    if (!usuario) return;
+    const id = usuario.id;
+    setVerificando(true);
+    try {
+      const activa = await reservaActivaDeUsuario(id);
+      const recurso = activa ? await obtenerRecurso(activa.recurso_id).catch(() => null) : null;
+      if (usuarioActual.current !== id) return;
+      setCitaActiva(activa ? { reserva: activa, recurso } : null);
+      if (reserva && reserva.id !== activa?.id) setReserva(null);
+      setErrorVerificacion(false);
+      setMensaje(null);
+    } catch {
+      if (usuarioActual.current !== id) return;
+      setErrorVerificacion(true);
+      setMensaje(MSG_ERROR_VERIFICACION);
+    } finally {
+      if (usuarioActual.current === id) setVerificando(false);
+    }
+  }
+
+  async function alCancelar(cancelada: Reserva) {
+    if (!usuario || cancelada.usuario_id !== usuario.id || cancelada.estado !== "cancelada") return;
+    setCitaActiva(null);
+    setReserva(null);
+    setSeleccion(null);
+    setDia(null);
+    setPaso(1);
+    setMensaje(null);
+    setErrorVerificacion(false);
+    // La cancelación ya fue leída y verificada; refrescar refleja otras reservas.
+    setOcupadas((anteriores) => {
+      const nuevas = new Set(anteriores);
+      nuevas.delete(cancelada.franja_id);
+      return nuevas;
+    });
+    await refrescarOcupadas();
+    await actualizarMisReservas();
+  }
+
+  function irAProgramar() {
+    setReserva(null);
+    setSeleccion(null);
+    setDia(null);
+    setPaso(1);
+    document.getElementById("programar-cita")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   async function elegirTipo(nuevoTipo: string) {
     setTipo(nuevoTipo);
     setPaso(1);
@@ -204,7 +274,7 @@ function Index() {
   }
 
   async function confirmar() {
-    if (!usuario || !seleccion) return;
+    if (!usuario || !seleccion || confirmando || cancelando || verificando || errorVerificacion || citaActiva) return;
     setConfirmando(true);
     setMensaje(null);
     const volverAHoras = () => {
@@ -223,6 +293,7 @@ function Index() {
       }
       const nueva = await crearReserva({ franja: seleccion, usuarioId: usuario.id });
       setReserva(nueva);
+      setCitaActiva({ reserva: nueva, recurso: recursoDe(nueva.recurso_id) ?? null });
       setOcupadas((prev) => new Set(prev).add(seleccion.id));
       void refrescarOcupadas();
     } catch (e) {
@@ -246,7 +317,10 @@ function Index() {
   }
 
   function reiniciar() {
+    if (confirmando || cancelando) return;
+    usuarioActual.current = null;
     setUsuario(null);
+    setVerificando(false);
     setCitaActiva(null);
     setErrorVerificacion(false);
     setTipo(null);
@@ -258,10 +332,6 @@ function Index() {
     setSeleccion(null);
     setReserva(null);
     setMensaje(null);
-  }
-
-  function nuevaCita() {
-    reiniciar();
   }
 
   return (
@@ -358,7 +428,7 @@ function Index() {
                     )}
                   </div>
                 </div>
-                <Button variant="outline" size="sm" onClick={reiniciar}>
+                <Button variant="outline" size="sm" disabled={confirmando || cancelando} onClick={reiniciar}>
                   Cambiar estudiante
                 </Button>
               </div>
@@ -381,38 +451,14 @@ function Index() {
           </CardContent>
         </Card>
 
-        {/* Cita activa existente */}
-        {usuario && citaActiva && !reserva && (
-          <Card className="border-destructive/40">
-            <CardHeader>
-              <div className="flex items-center gap-2 text-destructive">
-                <AlertTriangle className="size-5" />
-                <CardTitle className="text-base">Este estudiante ya tiene una cita activa</CardTitle>
-              </div>
-              <CardDescription>{MSG_RESERVA_ACTIVA}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <dl className="grid gap-3 sm:grid-cols-2">
-                <Dato icono={<CalendarDays className="size-4" />} titulo="Fecha">
-                  <span className="capitalize">{formatoFecha(citaActiva.reserva.fecha)}</span>
-                </Dato>
-                <Dato icono={<Clock className="size-4" />} titulo="Hora">
-                  {hhmm(citaActiva.reserva.hora_inicio)} – {hhmm(citaActiva.reserva.hora_fin)}
-                </Dato>
-                <Dato icono={<User className="size-4" />} titulo="Asesor / recurso">
-                  {citaActiva.recurso?.nombre ?? `Recurso ${citaActiva.reserva.recurso_id}`}
-                </Dato>
-                <Dato icono={<CheckCircle2 className="size-4" />} titulo="Estado">
-                  <Badge variant="secondary">{citaActiva.reserva.estado}</Badge>
-                </Dato>
-              </dl>
-            </CardContent>
-          </Card>
-        )}
+        {usuario && <MisReservas key={usuario.id} usuario={usuario} cita={citaActiva}
+          cargando={verificando} errorVerificacion={errorVerificacion} bloqueado={confirmando}
+          onActualizar={actualizarMisReservas} onCancelada={alCancelar}
+          onProgramar={irAProgramar} onOcupado={setCancelando} />}
 
         {/* Tipo de asesoría */}
         {usuario && !verificando && !errorVerificacion && !reserva && (
-          <Card>
+          <Card id="programar-cita" className="scroll-mt-6">
             <CardHeader>
               <CardTitle className="text-base">Tipo de asesoría</CardTitle>
               <CardDescription>Elige el acompañamiento que necesitas.</CardDescription>
@@ -604,7 +650,7 @@ function Index() {
                   <div className="flex flex-col gap-3 sm:flex-row">
                     <Button
                       onClick={confirmar}
-                      disabled={confirmando || !!citaActiva}
+                      disabled={confirmando || cancelando || verificando || errorVerificacion || !!citaActiva}
                       className="sm:min-w-48"
                     >
                       {confirmando ? "Confirmando…" : "Confirmar cita"}
@@ -642,8 +688,7 @@ function Index() {
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-wrap gap-3">
-              <Button onClick={nuevaCita}>Programar otra cita</Button>
-              <Button variant="outline" onClick={reiniciar}>
+              <Button variant="outline" disabled={cancelando} onClick={reiniciar}>
                 Salir
               </Button>
             </CardContent>
