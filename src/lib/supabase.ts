@@ -22,9 +22,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       body && typeof body === "object" && "message" in body
         ? String((body as { message: unknown }).message)
         : `Error ${res.status}`;
-    throw new Error(message);
+    throw new SupabaseError(message, String(body?.code ?? ""));
   }
   return body as T;
+}
+
+class SupabaseError extends Error {
+  constructor(message: string, public code: string) {
+    super(message);
+    this.name = "SupabaseError";
+  }
 }
 
 export type Usuario = {
@@ -126,6 +133,54 @@ export function reservaActivaDeUsuario(usuarioId: number) {
 
 export function obtenerRecurso(id: number) {
   return request<Recurso[]>(`/recursos?select=*&id=eq.${id}&limit=1`).then((r) => r[0] ?? null);
+}
+
+export class CancelacionError extends Error {
+  constructor(
+    public motivo: "no_asociada" | "no_activa" | "no_habilitada" | "no_verificada",
+    message: string,
+  ) {
+    super(message);
+    this.name = "CancelacionError";
+  }
+}
+
+// Identificación funcional del prototipo, NO autenticación: la operación SQL
+// vuelve a verificar ambos IDs y solo modifica el estado de esa reserva.
+export async function cancelarReserva(reservaId: number, usuarioId: number): Promise<Reserva> {
+  if (!Number.isSafeInteger(reservaId) || reservaId <= 0 ||
+      !Number.isSafeInteger(usuarioId) || usuarioId <= 0) {
+    throw new CancelacionError("no_asociada", "La reserva no corresponde al estudiante seleccionado.");
+  }
+  const path = `/reservas?select=*&id=eq.${reservaId}&usuario_id=eq.${usuarioId}&limit=1`;
+  const actual = (await request<Reserva[]>(path))[0];
+  if (!actual) {
+    throw new CancelacionError("no_asociada", "La reserva no corresponde al estudiante seleccionado.");
+  }
+  if (actual.estado !== "activa" && actual.estado !== "cancelada") {
+    throw new CancelacionError("no_activa", "Esta reserva ya no está activa. Actualiza Mis reservas.");
+  }
+  if (actual.estado === "activa") {
+    try {
+      await request<Reserva[]>("/rpc/cancelar_reserva", {
+        method: "POST",
+        body: JSON.stringify({ p_reserva_id: reservaId, p_usuario_id: usuarioId }),
+      });
+    } catch (error) {
+      if (error instanceof SupabaseError &&
+          (error.code === "PGRST202" || error.code === "42501")) {
+        throw new CancelacionError("no_habilitada", "La cancelación todavía no está habilitada en Supabase. No se ha confirmado ningún cambio; intenta nuevamente cuando esté habilitada.");
+      }
+      throw error;
+    }
+  }
+  // Nunca liberar el cupo ni anunciar éxito solo por una respuesta HTTP correcta.
+  const verificada = (await request<Reserva[]>(path))[0];
+  if (!verificada || verificada.id !== reservaId ||
+      verificada.usuario_id !== usuarioId || verificada.estado !== "cancelada") {
+    throw new CancelacionError("no_verificada", "No pudimos confirmar la cancelación. Conservamos tu cita en pantalla; actualiza o reintenta antes de reservar nuevamente.");
+  }
+  return verificada;
 }
 
 export function listarRecursosPorTipo(tipo: string) {
