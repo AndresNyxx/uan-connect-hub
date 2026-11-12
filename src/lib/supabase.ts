@@ -197,3 +197,30 @@ export async function crearReserva(input: {
   if (!creada) throw new ReservaError("otro", "No se pudo crear la reserva.");
   return creada;
 }
+
+// Historial de reservas del estudiante (más recientes primero).
+export function listarReservasDeUsuario(usuarioId: number) {
+  return request<Reserva[]>(
+    `/reservas?select=*&usuario_id=eq.${usuarioId}&order=fecha.desc&order=hora_inicio.desc`,
+  );
+}
+
+export function listarRecursosPorIds(ids: number[]) {
+  if (ids.length === 0) return Promise.resolve([] as Recurso[]);
+  return request<Recurso[]>(`/recursos?select=*&id=in.(${ids.join(",")})`);
+}
+
+// Cancela una reserva usando la función de PostgreSQL `cancelar_reserva`, que
+// verifica que la reserva pertenezca al estudiante y siga activa. Solo se da por
+// cancelada cuando la relectura desde Supabase confirma el estado "cancelada".
+export async function cancelarReserva(reservaId: number, usuarioId: number) {
+  await request<unknown>(`/rpc/cancelar_reserva`, {
+    method: "POST",
+    body: JSON.stringify({ p_reserva_id: reservaId, p_usuario_id: usuarioId }),
+  });
+  const filas = await request<Reserva[]>(
+    `/reservas?select=*&id=eq.${reservaId}&usuario_id=eq.${usuarioId}&limit=1`,
+  );
+  if (filas[0]?.estado !== "cancelada") throw new Error("No se confirmó la cancelación.");
+  return filas[0];
+}

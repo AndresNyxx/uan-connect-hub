@@ -18,6 +18,16 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   TIPOS_ASESORIA,
   ReservaError,
   ahoraEnColombia,
@@ -29,6 +39,10 @@ import {
   listarUsuarios,
   obtenerRecurso,
   reservaActivaDeUsuario,
+  reservaVigente,
+  cancelarReserva,
+  listarReservasDeUsuario,
+  listarRecursosPorIds,
   type Franja,
   type Recurso,
   type Reserva,
@@ -118,7 +132,51 @@ function Index() {
     );
   }, [usuarios, filtro]);
 
-  async function seleccionarEstudiante(u: Usuario) {
+  const [misReservas, setMisReservas] = useState<Reserva[]>([]);
+  const [nombresRecurso, setNombresRecurso] = useState<Record<number, string>>({});
+  const [aCancelar, setACancelar] = useState<Reserva | null>(null);
+  const [cancelando, setCancelando] = useState(false);
+  const [exito, setExito] = useState<string | null>(null);
+
+  async function cargarMisReservas(u: Usuario) {
+    try {
+      const rs = await listarReservasDeUsuario(u.id);
+      setMisReservas(rs);
+      const ids = [...new Set(rs.map((r) => r.recurso_id))];
+      const recs = await listarRecursosPorIds(ids).catch(() => [] as Recurso[]);
+      setNombresRecurso(Object.fromEntries(recs.map((r) => [r.id, r.nombre])));
+    } catch {
+      setMisReservas([]);
+    }
+  }
+
+  async function ejecutarCancelacion() {
+    if (!usuario || !aCancelar) return;
+    // Validación funcional: la reserva debe pertenecer al estudiante seleccionado.
+    if (aCancelar.usuario_id !== usuario.id) {
+      setMensaje("Esta reserva no pertenece al estudiante seleccionado.");
+      setACancelar(null);
+      return;
+    }
+    setCancelando(true);
+    setMensaje(null);
+    try {
+      await cancelarReserva(aCancelar.id, usuario.id);
+      setACancelar(null);
+      setExito("La reserva fue cancelada. El horario quedó disponible nuevamente.");
+      await seleccionarEstudiante(usuario, true);
+      if (tipo) await refrescarOcupadas().catch(() => {});
+    } catch {
+      setACancelar(null);
+      setMensaje("No se pudo cancelar la reserva. Intenta nuevamente.");
+    } finally {
+      setCancelando(false);
+    }
+  }
+
+  async function seleccionarEstudiante(u: Usuario, conservarExito = false) {
+    if (!conservarExito) setExito(null);
+    void cargarMisReservas(u);
     setUsuario(u);
     setCitaActiva(null);
     setMensaje(null);
@@ -247,6 +305,8 @@ function Index() {
 
   function reiniciar() {
     setUsuario(null);
+    setMisReservas([]);
+    setExito(null);
     setCitaActiva(null);
     setErrorVerificacion(false);
     setTipo(null);
@@ -284,6 +344,13 @@ function Index() {
         {mensaje && (
           <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {mensaje}
+          </div>
+        )}
+
+        {exito && (
+          <div className="flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-primary">
+            <CheckCircle2 className="size-4" />
+            {exito}
           </div>
         )}
 
@@ -409,6 +476,85 @@ function Index() {
             </CardContent>
           </Card>
         )}
+
+        {/* Mis reservas */}
+        {usuario && !verificando && !reserva && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Mis reservas</CardTitle>
+              <CardDescription>
+                Consulta tus citas y cancela las que sigan activas.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {misReservas.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Aún no tienes reservas registradas.</p>
+              ) : (
+                <ul className="divide-y rounded-xl border">
+                  {misReservas.map((r) => {
+                    const cancelable = r.estado === "activa" && reservaVigente(r);
+                    const etiqueta =
+                      r.estado === "activa" && !cancelable ? "vencida" : r.estado;
+                    return (
+                      <li
+                        key={r.id}
+                        className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium capitalize">
+                            {formatoFecha(r.fecha)} · {hhmm(r.hora_inicio)} – {hhmm(r.hora_fin)}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {nombresRecurso[r.recurso_id] ?? `Recurso ${r.recurso_id}`}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant={cancelable ? "default" : "secondary"}>{etiqueta}</Badge>
+                          {cancelable && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="border-destructive/40 text-destructive hover:bg-destructive/10"
+                              onClick={() => setACancelar(r)}
+                            >
+                              Cancelar
+                            </Button>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        <AlertDialog open={!!aCancelar} onOpenChange={(o) => !o && !cancelando && setACancelar(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>¿Cancelar esta reserva?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {aCancelar &&
+                  `${formatoFecha(aCancelar.fecha)}, ${hhmm(aCancelar.hora_inicio)} – ${hhmm(
+                    aCancelar.hora_fin,
+                  )} con ${nombresRecurso[aCancelar.recurso_id] ?? "el asesor"}. El horario quedará disponible para otros estudiantes.`}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={cancelando}>Volver</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={cancelando}
+                onClick={(e) => {
+                  e.preventDefault();
+                  void ejecutarCancelacion();
+                }}
+              >
+                {cancelando ? "Cancelando…" : "Sí, cancelar reserva"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* Tipo de asesoría */}
         {usuario && !verificando && !errorVerificacion && !reserva && (
